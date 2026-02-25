@@ -85,21 +85,21 @@ func (b *Builder) Meta(file string) *Builder {
 }
 
 // Stdin redirects standard input from the given file (--stdin).
-// The file must be accessible inside the sandbox.
+// The file must be present inside the sandbox (use WriteToSandbox to copy it).
 func (b *Builder) Stdin(file string) *Builder {
 	b.stdin = file
 	return b
 }
 
 // Stdout redirects standard output to the given file (--stdout).
-// The file must be accessible inside the sandbox.
+// The file will be created/written inside the sandbox.
 func (b *Builder) Stdout(file string) *Builder {
 	b.stdout = file
 	return b
 }
 
 // Stderr redirects standard error to the given file (--stderr).
-// The file must be accessible inside the sandbox. Mutually exclusive with StderrToStdout.
+// The file will be created/written inside the sandbox. Mutually exclusive with StderrToStdout.
 func (b *Builder) Stderr(file string) *Builder {
 	b.stderr = file
 	return b

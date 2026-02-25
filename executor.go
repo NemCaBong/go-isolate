@@ -163,6 +163,10 @@ func (e *Executor) Init(ctx context.Context) (string, error) {
 }
 
 // Run executes a program inside the sandbox.
+//
+// NOTE: You must ensure the program/binary and any required input files
+// are already present inside the sandbox before calling Run. Use
+// WriteToSandbox or WriteReaderToSandbox to copy files after Init.
 func (e *Executor) Run(ctx context.Context, program string, args ...string) (*Result, error) {
 	cmd := e.builder.BuildRun(program, args...)
 	result, err := e.execute(ctx, cmd)

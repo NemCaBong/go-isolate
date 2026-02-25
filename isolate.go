@@ -7,7 +7,7 @@
 //
 // Basic usage:
 //
-//	cmd := isolate.New().
+//	exec := isolate.New().
 //		BoxID(0).
 //		MemoryLimit(256 * 1024).   // 256 MB
 //		TimeLimit(5.0).            // 5 seconds
@@ -15,16 +15,24 @@
 //		Stdin("input.txt").
 //		Stdout("output.txt").
 //		Stderr("error.txt").
-//		Meta("/tmp/meta.txt")
+//		Meta("/tmp/meta.txt").
+//		Exec()
 //
-//	// Initialize the sandbox
-//	workDir, err := cmd.Init()
+//	ctx := context.Background()
 //
-//	// Run a program
-//	result, err := cmd.Run("./solution", "arg1", "arg2")
+//	// 1. Initialize the sandbox
+//	workDir, err := exec.Init(ctx)
 //
-//	// Clean up
-//	err = cmd.Cleanup()
+//	// 2. IMPORTANT: Copy your program and data into the sandbox.
+//	// The sandbox is an isolated environment and starts empty.
+//	bin, _ := os.ReadFile("/path/to/solution")
+//	err = exec.WriteToSandbox("solution", bin, 0755)
+//
+//	// 3. Run the program inside the sandbox
+//	result, err := exec.Run(ctx, "./solution", "arg1", "arg2")
+//
+//	// 4. Clean up
+//	err = exec.Cleanup(ctx)
 package isolate
 
 import (

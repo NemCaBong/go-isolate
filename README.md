@@ -19,6 +19,7 @@ import (
     "context"
     "fmt"
     "log"
+    "os"
 
     isolate "github.com/hoangnm/go-isolate"
 )
@@ -51,7 +52,15 @@ func main() {
     }
     fmt.Println("Working directory:", workDir)
 
-    // Run a program
+    // IMPORTANT: You must copy your program/files into the sandbox before execution.
+    // The sandbox starts empty (or with minimal system files).
+    // Here we read a compiled binary from the host and write it into the sandbox.
+    bin, _ := os.ReadFile("/path/to/compiled/solution")
+    if err := exec.WriteToSandbox("solution", bin, 0755); err != nil {
+        log.Fatal(err)
+    }
+
+    // Run the program inside the sandbox
     result, err := exec.Run(ctx, "./solution", "arg1", "arg2")
     if err != nil {
         log.Fatal(err)
@@ -140,9 +149,9 @@ fmt.Printf("Status: %s\n", meta.Status)
 |--------|------|-------------|
 | `BoxID(id)` | `--box-id` | Set sandbox ID (default: 0) |
 | `Meta(file)` | `--meta` | Output meta-file path |
-| `Stdin(file)` | `--stdin` | Redirect stdin |
-| `Stdout(file)` | `--stdout` | Redirect stdout |
-| `Stderr(file)` | `--stderr` | Redirect stderr |
+| `Stdin(file)` | `--stdin` | Redirect stdin (file must be in sandbox) |
+| `Stdout(file)` | `--stdout` | Redirect stdout (created in sandbox) |
+| `Stderr(file)` | `--stderr` | Redirect stderr (created in sandbox) |
 | `StderrToStdout()` | `--stderr-to-stdout` | Redirect stderr to stdout |
 | `Chdir(dir)` | `--chdir` | Change working directory |
 | `Verbose()` | `--verbose` | Increase verbosity |

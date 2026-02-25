@@ -47,7 +47,7 @@ func buildExample() {
 
 // fullLifecycleExample shows the complete workflow:
 // 1. Init sandbox → get workDir
-// 2. Write executable + input content into the sandbox
+// 2. IMPORTANT: Copy your executable + input content into the sandbox environment
 // 3. Run the program
 // 4. Cleanup
 func fullLifecycleExample() {
@@ -168,7 +168,10 @@ func autoCleanupExample() {
 	exec.EnableAutoCleanup()
 	defer exec.Cleanup(ctx) // also cleanup on normal exit
 
-	// Step 2: Run the program (using system binary already available in sandbox)
+	// Step 2: Run the program.
+	// Note: While system binaries like '/bin/echo' might be available via default
+	// directory bindings, your own compiled programs MUST be copied into the
+	// sandbox using exec.WriteToSandbox() before they can be executed.
 	result, err := exec.Run(ctx, "/bin/echo", "Hello!")
 	if err != nil {
 		log.Printf("Run failed: %v", err)
