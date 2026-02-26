@@ -1,3 +1,3 @@
-module github.com/hoangnm/go-isolate
+module github.com/NemCaBong/go-isolate
 
 go 1.20
