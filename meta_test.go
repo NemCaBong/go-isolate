@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	isolate "github.com/hoangnm/go-isolate"
+	isolate "github.com/NemCaBong/go-isolate"
 )
 
 func TestParseMetaSuccess(t *testing.T) {

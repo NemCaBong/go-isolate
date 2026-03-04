@@ -3,7 +3,7 @@ package isolate_test
 import (
 	"testing"
 
-	isolate "github.com/hoangnm/go-isolate"
+	isolate "github.com/NemCaBong/go-isolate"
 )
 
 func TestValidateSuccess(t *testing.T) {
