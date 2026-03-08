@@ -7,11 +7,11 @@ type Builder struct {
 	isolatePath string
 
 	// --- Basic Options ---
-	boxID   *int
-	meta    string
-	stdin   string
-	stdout  string
-	stderr  string
+	boxID  *int
+	meta   string
+	stdin  string
+	stdout string
+	stderr string
 
 	stderrToStdout bool
 	chdir          string
@@ -45,12 +45,12 @@ type Builder struct {
 	cgMem *int // kilobytes
 
 	// --- Special Options ---
-	shareNet   bool
-	inheritFDs bool
-	ttyHack    bool
+	shareNet     bool
+	inheritFDs   bool
+	ttyHack      bool
 	specialFiles bool
-	asUID      *int
-	asGID      *int
+	asUID        *int
+	asGID        *int
 }
 
 // New creates a new [Builder] with default settings.

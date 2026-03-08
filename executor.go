@@ -336,6 +336,19 @@ func (e *Executor) execute(ctx context.Context, cmd *Command) (*Result, error) {
 		Stderr: stderr.String(),
 	}
 
+	if e.builder.stdout != "" && e.workDir != "" {
+		data, readErr := os.ReadFile(filepath.Join(e.workDir, e.builder.stdout))
+		if readErr == nil {
+			result.Stdout = string(data)
+		}
+	}
+	if e.builder.stderr != "" && e.workDir != "" {
+		data, readErr := os.ReadFile(filepath.Join(e.workDir, e.builder.stderr))
+		if readErr == nil {
+			result.Stderr = string(data)
+		}
+	}
+
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			result.ExitCode = exitErr.ExitCode()
