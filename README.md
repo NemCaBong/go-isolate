@@ -7,7 +7,7 @@ Isolate is a tool for running processes inside Linux sandboxes (containers) with
 ## Installation
 
 ```bash
-go get github.com/hoangnm/go-isolate
+go get github.com/NemCaBong/go-isolate
 ```
 
 ## Quick Start
@@ -21,7 +21,7 @@ import (
     "log"
     "os"
 
-    isolate "github.com/hoangnm/go-isolate"
+    isolate "github.com/NemCaBong/go-isolate"
 )
 
 func main() {

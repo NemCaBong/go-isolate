@@ -359,3 +359,9 @@ func (e *Executor) execute(ctx context.Context, cmd *Command) (*Result, error) {
 
 	return result, nil
 }
+
+func (e *Executor) ApplyOptions(options ...ExecuteOption) {
+	for _, opt := range options {
+		opt(e)
+	}
+}
