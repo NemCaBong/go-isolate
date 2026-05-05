@@ -3,15 +3,13 @@ package isolate
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
-	"syscall"
 )
 
 // PrepareFunc is a callback invoked between Init and Run, typically used
@@ -39,10 +37,6 @@ type Result struct {
 type Executor struct {
 	builder *Builder
 	workDir string
-
-	// For graceful shutdown
-	cleanupOnce sync.Once
-	stopSignal  chan os.Signal
 }
 
 // NewExecutor creates a new Executor from a Builder.
@@ -134,10 +128,16 @@ func (e *Executor) WriteReaderToSandbox(destName string, r io.Reader, perm os.Fi
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", destPath, err)
 	}
-	defer dst.Close()
 
-	if _, err := io.Copy(dst, r); err != nil {
-		return fmt.Errorf("failed to write file %s: %w", destPath, err)
+	if _, copyErr := io.Copy(dst, r); copyErr != nil {
+		// Best-effort close; the copy error is the meaningful one to return.
+		_ = dst.Close()
+		return fmt.Errorf("failed to write file %s: %w", destPath, copyErr)
+	}
+
+	// Close explicitly (not via defer) so flush errors are not silently dropped.
+	if closeErr := dst.Close(); closeErr != nil {
+		return fmt.Errorf("failed to close file %s: %w", destPath, closeErr)
 	}
 
 	return nil
@@ -147,6 +147,7 @@ func (e *Executor) WriteReaderToSandbox(destName string, r io.Reader, perm os.Fi
 
 // Init initializes the sandbox and returns the working directory path.
 // If the sandbox already exists, it is reset.
+// Per isolate docs: --init always exits 0 even when resetting an existing sandbox.
 func (e *Executor) Init(ctx context.Context) (string, error) {
 	cmd := e.builder.BuildInit()
 	result, err := e.execute(ctx, cmd)
@@ -189,25 +190,14 @@ func (e *Executor) Run(ctx context.Context, program string, args ...string) (*Re
 }
 
 // Cleanup removes the sandbox and its temporary files.
-// It is safe to call Cleanup multiple times.
-func (e *Executor) Cleanup(ctx context.Context) error {
-	var cleanupErr error
-	e.cleanupOnce.Do(func() {
-		cmd := e.builder.BuildCleanup()
-		result, err := e.execute(ctx, cmd)
-		if err != nil {
-			cleanupErr = fmt.Errorf("cleanup failed: %w", err)
-			return
-		}
-
-		if result.ExitCode != 0 {
-			cleanupErr = fmt.Errorf("cleanup failed with exit code %d: %s", result.ExitCode, result.Stderr)
-			return
-		}
-
-		e.workDir = ""
-	})
-	return cleanupErr
+// Safe to call multiple times — per isolate docs, --cleanup is idempotent:
+// if the sandbox was already removed or never initialized, it does nothing
+// and exits with code 0. Errors from the isolate process are therefore ignored.
+func (e *Executor) Cleanup(ctx context.Context) {
+	cmd := e.builder.BuildCleanup()
+	// Discard result: --cleanup always exits 0 per isolate docs.
+	_, _ = e.execute(ctx, cmd)
+	e.workDir = ""
 }
 
 // --- Reusable Sandbox Pattern ---
@@ -235,9 +225,8 @@ func (e *Executor) Cleanup(ctx context.Context) error {
 //	}
 //	result2, _ := exec.InitAndRun(ctx, prepare, "./solution")
 func (e *Executor) InitAndRun(ctx context.Context, prepare PrepareFunc, program string, args ...string) (*Result, error) {
-	// Reset cleanupOnce so Cleanup works again after re-init
-	e.cleanupOnce = sync.Once{}
-
+	// Per isolate docs: --init resets an existing sandbox automatically,
+	// so no --cleanup is needed between runs.
 	workDir, err := e.Init(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox reset failed: %w", err)
@@ -251,61 +240,6 @@ func (e *Executor) InitAndRun(ctx context.Context, prepare PrepareFunc, program 
 	}
 
 	return e.Run(ctx, program, args...)
-}
-
-// --- Graceful Shutdown ---
-
-// EnableAutoCleanup registers OS signal handlers (SIGINT, SIGTERM) so that
-// the sandbox is automatically cleaned up when the application is shutting down.
-//
-// This handles the case where your app receives Ctrl+C or a kill signal.
-// Note: SIGKILL (kill -9) cannot be caught — for that case, the sandbox
-// will be reset automatically on the next Init call.
-//
-// Call DisableAutoCleanup or Cleanup to stop listening for signals.
-//
-// Usage:
-//
-//	exec := isolate.New().BoxID(0).Exec()
-//	exec.Init(ctx)
-//	exec.EnableAutoCleanup()  // auto-cleanup on SIGINT/SIGTERM
-//	defer exec.Cleanup(ctx)   // also cleanup normally
-func (e *Executor) EnableAutoCleanup() {
-	e.stopSignal = make(chan os.Signal, 1)
-	signal.Notify(e.stopSignal, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		sig, ok := <-e.stopSignal
-		if !ok {
-			return // channel closed, normal shutdown
-		}
-
-		fmt.Fprintf(os.Stderr, "\n[go-isolate] Received %s, cleaning up sandbox...\n", sig)
-
-		// Use a background context since the original may be cancelled
-		ctx, cancel := context.WithTimeout(context.Background(), 5*0x1) // 5 seconds
-		defer cancel()
-
-		if err := e.Cleanup(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "[go-isolate] Cleanup error: %v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "[go-isolate] Sandbox cleaned up successfully\n")
-		}
-
-		// Re-raise the signal so the process exits with the correct status
-		signal.Reset(sig)
-		p, _ := os.FindProcess(os.Getpid())
-		p.Signal(sig)
-	}()
-}
-
-// DisableAutoCleanup stops listening for OS signals.
-func (e *Executor) DisableAutoCleanup() {
-	if e.stopSignal != nil {
-		signal.Stop(e.stopSignal)
-		close(e.stopSignal)
-		e.stopSignal = nil
-	}
 }
 
 // --- Control Group ---
@@ -350,7 +284,8 @@ func (e *Executor) execute(ctx context.Context, cmd *Command) (*Result, error) {
 	}
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			result.ExitCode = exitErr.ExitCode()
 		} else {
 			return nil, err

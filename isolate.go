@@ -31,8 +31,8 @@
 //	// 3. Run the program inside the sandbox
 //	result, err := exec.Run(ctx, "./solution", "arg1", "arg2")
 //
-//	// 4. Clean up
-//	err = exec.Cleanup(ctx)
+//	// 4. Clean up (no error return — cleanup is idempotent per isolate docs)
+//	exec.Cleanup(ctx)
 package isolate
 
 import (
