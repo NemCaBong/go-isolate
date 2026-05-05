@@ -1,14 +1,38 @@
 # go-isolate
 
-A Go library for building and executing [isolate](https://github.com/ioi/isolate) sandbox commands using the **builder design pattern**.
+[![CI](https://github.com/NemCaBong/go-isolate/actions/workflows/ci.yml/badge.svg)](https://github.com/NemCaBong/go-isolate/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/NemCaBong/go-isolate.svg)](https://pkg.go.dev/github.com/NemCaBong/go-isolate)
+[![Go Report Card](https://goreportcard.com/badge/github.com/NemCaBong/go-isolate)](https://goreportcard.com/report/github.com/NemCaBong/go-isolate)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Go Version](https://img.shields.io/badge/go-%3E%3D1.20-blue)](go.mod)
 
-Isolate is a tool for running processes inside Linux sandboxes (containers) with strict resource limits and filesystem isolation. This library provides a **type-safe, fluent API** for constructing isolate commands programmatically.
+A Go library for building and executing [isolate](https://github.com/ioi/isolate) sandbox commands with a **type-safe, fluent builder API**.
+
+[Isolate](https://github.com/ioi/isolate) is the sandbox used by [Codeforces](https://codeforces.com), [CMS](https://cms-dev.github.io/), and the [IOI](https://ioinformatics.org/) to safely run untrusted code inside Linux containers with strict resource limits. This library wraps its CLI into an idiomatic Go interface — no manual string building, no missed flags.
+
+## Why go-isolate?
+
+| Without go-isolate | With go-isolate |
+|--------------------|-----------------|
+| Build shell strings by hand | Fluent builder with compile-time safety |
+| Silently forget a flag | Validation catches config conflicts before execution |
+| Parse meta-file output manually | `ParseMeta()` gives you a typed `Meta` struct |
+| Manage init/run/cleanup yourself | `InitAndRun` handles the full lifecycle |
+
+## Use Cases
+
+- **Online judges / competitive programming platforms** — run user-submitted solutions with CPU/memory limits
+- **Automated grading systems** — execute and evaluate programs in isolated environments
+- **Security sandboxing** — run untrusted binaries without risking the host system
+- **Batch code evaluation** — evaluate multiple submissions against test cases at scale
 
 ## Installation
 
 ```bash
 go get github.com/NemCaBong/go-isolate
 ```
+
+Requires the `isolate` binary to be installed on the host. See [isolate's installation guide](https://github.com/ioi/isolate#installation).
 
 ## Quick Start
 
@@ -25,120 +49,142 @@ import (
 )
 
 func main() {
-    // Create a builder with desired settings
     builder := isolate.New().
         BoxID(0).
-        MemoryLimit(256 * 1024).  // 256 MB
-        TimeLimit(5.0).           // 5 seconds
-        WallTimeLimit(10.0).      // 10 seconds
+        MemoryLimit(256 * 1024). // 256 MB
+        TimeLimit(5.0).          // 5 seconds CPU
+        WallTimeLimit(10.0).     // 10 seconds wall clock
         Meta("/tmp/meta.txt").
-        Stdin("input.txt").
         Stdout("output.txt").
         Stderr("error.txt")
 
-    // Validate configuration
     if err := builder.Validate(); err != nil {
         log.Fatal(err)
     }
 
-    // Create an executor
     exec := builder.Exec()
     ctx := context.Background()
 
-    // Initialize sandbox
     workDir, err := exec.Init(ctx)
     if err != nil {
         log.Fatal(err)
     }
-    fmt.Println("Working directory:", workDir)
+    fmt.Println("Sandbox working directory:", workDir)
 
-    // IMPORTANT: You must copy your program/files into the sandbox before execution.
-    // The sandbox starts empty (or with minimal system files).
-    // Here we read a compiled binary from the host and write it into the sandbox.
+    // Copy your compiled binary into the sandbox before running.
     bin, _ := os.ReadFile("/path/to/compiled/solution")
     if err := exec.WriteToSandbox("solution", bin, 0755); err != nil {
         log.Fatal(err)
     }
 
-    // Run the program inside the sandbox
-    result, err := exec.Run(ctx, "./solution", "arg1", "arg2")
+    result, err := exec.Run(ctx, "./solution")
     if err != nil {
         log.Fatal(err)
     }
 
-    // Check results
     if result.Meta != nil && result.Meta.IsSuccess() {
-        fmt.Printf("Success! Time: %.3fs, Memory: %d KB\n",
+        fmt.Printf("Accepted! Time: %.3fs, Memory: %d KB\n",
             result.Meta.Time, result.Meta.MaxRSS)
     }
 
-    // Clean up
     exec.Cleanup(ctx)
 }
 ```
 
 ## Features
 
-### Builder Pattern
+### Fluent Builder
 
-All isolate options are configured via a fluent builder API:
+All 40+ isolate options are configured via method chaining:
 
 ```go
 builder := isolate.New().
-    BoxID(0).
-    MemoryLimit(256 * 1024).
-    TimeLimit(5.0).
-    WallTimeLimit(10.0)
+    BoxID(1).
+    MemoryLimit(128 * 1024).
+    TimeLimit(2.0).
+    WallTimeLimit(5.0).
+    Processes(1).
+    ControlGroup().
+    CGMemoryLimit(128 * 1024).
+    InheritEnv("PATH").
+    Dir("/usr", "/usr", isolate.DirMaybe)
 ```
 
-### Command Building (Without Execution)
+### Command Building Without Execution
 
-If you only need to build the command-line arguments without executing them:
+Inspect the exact command that would be run, without executing it:
 
 ```go
-// Build init command
-initCmd := builder.BuildInit()
-fmt.Println(initCmd.String())
-// Output: isolate --box-id=0 --init
+fmt.Println(builder.BuildInit().String())
+// isolate --box-id=0 --init
 
-// Build run command
-runCmd := builder.BuildRun("./solution", "arg1")
-fmt.Println(runCmd.String())
-// Output: isolate --box-id=0 --mem=262144 --time=5 --wall-time=10 --run -- ./solution arg1
+fmt.Println(builder.BuildRun("./solution", "arg1").String())
+// isolate --box-id=0 --mem=131072 --time=2 --wall-time=5 --run -- ./solution arg1
 
-// Build cleanup command
-cleanupCmd := builder.BuildCleanup()
-fmt.Println(cleanupCmd.String())
-// Output: isolate --box-id=0 --cleanup
+fmt.Println(builder.BuildCleanup().String())
+// isolate --box-id=0 --cleanup
+```
+
+### Reusable Sandboxes
+
+Use `InitAndRun` to run multiple programs against the same sandbox (reset between runs):
+
+```go
+exec := isolate.New().BoxID(0).MemoryLimit(256*1024).TimeLimit(5).Exec()
+
+for _, tc := range testCases {
+    result, err := exec.InitAndRun(ctx,
+        func(workDir string) error {
+            // Called once per run, after Init, before execution.
+            // Copy input files and the binary here.
+            return exec.WriteToSandbox("input.txt", tc.Input, 0644)
+        },
+        "./solution",
+    )
+    // result contains exit code, stdout, stderr, and parsed Meta
+}
 ```
 
 ### Validation
 
-The builder includes validation for common configuration errors:
+Catch configuration errors before hitting the sandbox:
 
 ```go
 builder := isolate.New().
     Stderr("error.txt").
-    StderrToStdout()  // Mutually exclusive with Stderr!
+    StderrToStdout() // mutually exclusive!
 
 if err := builder.Validate(); err != nil {
-    // Error: cannot use both Stderr and StderrToStdout
+    // Error: cannot use both --stderr and --stderr-to-stdout
 }
 ```
 
 ### Meta-file Parsing
 
-Parse isolate's meta-file output into structured data:
+Parse isolate's structured output into a typed Go struct:
 
 ```go
-meta, err := isolate.ParseMetaString(metaData)
+meta, err := isolate.ParseMetaString(rawMetaOutput)
 if err != nil {
     log.Fatal(err)
 }
 
-fmt.Printf("Time: %.3fs\n", meta.Time)
-fmt.Printf("Memory: %d KB\n", meta.MaxRSS)
-fmt.Printf("Status: %s\n", meta.Status)
+fmt.Printf("Status:  %s\n", meta.Status)   // OK, RE, SG, TO, XX
+fmt.Printf("Time:    %.3fs\n", meta.Time)
+fmt.Printf("Memory:  %d KB\n", meta.MaxRSS)
+fmt.Printf("Exit:    %d\n", meta.ExitCode)
+fmt.Printf("Success: %v\n", meta.IsSuccess())
+```
+
+### Dynamic Execute Options
+
+Modify builder settings at execution time without rebuilding:
+
+```go
+exec.ApplyOptions(
+    isolate.WithMemoryLimit(512 * 1024),
+    isolate.WithTimeLimit(10.0),
+)
 ```
 
 ## API Reference
@@ -147,18 +193,18 @@ fmt.Printf("Status: %s\n", meta.Status)
 
 | Method | Flag | Description |
 |--------|------|-------------|
-| `BoxID(id)` | `--box-id` | Set sandbox ID (default: 0) |
-| `Meta(file)` | `--meta` | Output meta-file path |
-| `Stdin(file)` | `--stdin` | Redirect stdin (file must be in sandbox) |
-| `Stdout(file)` | `--stdout` | Redirect stdout (created in sandbox) |
-| `Stderr(file)` | `--stderr` | Redirect stderr (created in sandbox) |
-| `StderrToStdout()` | `--stderr-to-stdout` | Redirect stderr to stdout |
-| `Chdir(dir)` | `--chdir` | Change working directory |
+| `BoxID(id)` | `--box-id` | Sandbox ID (default: 0) |
+| `Meta(file)` | `--meta` | Meta-file output path |
+| `Stdin(file)` | `--stdin` | Redirect stdin |
+| `Stdout(file)` | `--stdout` | Redirect stdout |
+| `Stderr(file)` | `--stderr` | Redirect stderr |
+| `StderrToStdout()` | `--stderr-to-stdout` | Merge stderr into stdout |
+| `Chdir(dir)` | `--chdir` | Change working directory inside sandbox |
 | `Verbose()` | `--verbose` | Increase verbosity |
 | `Silent()` | `--silent` | Suppress status messages |
-| `Wait()` | `--wait` | Wait for other instances |
+| `Wait()` | `--wait` | Wait for other instances using same box |
 
-### Limits
+### Resource Limits
 
 | Method | Flag | Description |
 |--------|------|-------------|
@@ -167,66 +213,58 @@ fmt.Printf("Status: %s\n", meta.Status)
 | `WallTimeLimit(sec)` | `--wall-time` | Wall clock limit (seconds) |
 | `ExtraTime(sec)` | `--extra-time` | Grace period after timeout |
 | `StackLimit(kb)` | `--stack` | Stack size limit (KB) |
-| `OpenFilesLimit(n)` | `--open-files` | Max open files (0=unlimited) |
-| `FileSizeLimit(kb)` | `--fsize` | Max file size (KB) |
+| `OpenFilesLimit(n)` | `--open-files` | Max open files (0 = unlimited) |
+| `FileSizeLimit(kb)` | `--fsize` | Max output file size (KB) |
 | `DiskQuota(blocks, inodes)` | `--quota` | Disk quota (init only) |
-| `CoreLimit(kb)` | `--core` | Core file size limit (KB) |
-| `Processes(n)` | `--processes` | Max processes/threads |
-| `ProcessesUnlimited()` | `--processes` | Unlimited processes |
+| `CoreLimit(kb)` | `--core` | Core dump size limit (KB) |
+| `Processes(n)` | `--processes` | Max simultaneous processes/threads |
+| `ProcessesUnlimited()` | `--processes` | No process count limit |
 
 ### Environment Rules
 
 | Method | Flag | Description |
 |--------|------|-------------|
-| `FullEnv()` | `--full-env` | Inherit all env vars |
-| `InheritEnv(var)` | `--env=var` | Inherit specific var |
-| `SetEnv(var, val)` | `--env=var=val` | Set env var |
-| `RemoveEnv(var)` | `--env=var=` | Remove env var |
+| `FullEnv()` | `--full-env` | Inherit all environment variables |
+| `InheritEnv(var)` | `--env=var` | Inherit a specific variable |
+| `SetEnv(var, val)` | `--env=var=val` | Set a variable to a value |
+| `RemoveEnv(var)` | `--env=var=` | Explicitly remove a variable |
 
 ### Directory Rules
 
 | Method | Flag | Description |
 |--------|------|-------------|
-| `NoDefaultDirs()` | `--no-default-dirs` | Disable default bindings |
-| `Dir(in, out, opts...)` | `--dir=in=out:opts` | Bind directory |
-| `DirSimple(dir, opts...)` | `--dir=dir:opts` | Bind with same path |
-| `RemoveDir(in)` | `--dir=in=` | Remove directory rule |
+| `NoDefaultDirs()` | `--no-default-dirs` | Disable default directory bindings |
+| `Dir(in, out, opts...)` | `--dir=in=out:opts` | Bind host dir to sandbox path |
+| `DirSimple(dir, opts...)` | `--dir=dir:opts` | Bind with same path inside/outside |
+| `RemoveDir(in)` | `--dir=in=` | Remove a directory rule |
 
-#### Directory Options
-
-- `DirRW` — Read-write access
-- `DirDev` — Allow devices
-- `DirNoExec` — No execution
-- `DirMaybe` — Ignore if missing
-- `DirFS` — Mount filesystem
-- `DirTmp` — Temporary directory
-- `DirNoRec` — Non-recursive bind
+**Directory options:** `DirRW` `DirDev` `DirNoExec` `DirMaybe` `DirFS` `DirTmp` `DirNoRec`
 
 ### Control Groups
 
 | Method | Flag | Description |
 |--------|------|-------------|
-| `ControlGroup()` | `--cg` | Enable control groups |
-| `CGMemoryLimit(kb)` | `--cg-mem` | CG memory limit (KB) |
+| `ControlGroup()` | `--cg` | Enable cgroup-based resource accounting |
+| `CGMemoryLimit(kb)` | `--cg-mem` | Memory limit enforced via cgroups (KB) |
 
 ### Special Options
 
 | Method | Flag | Description |
 |--------|------|-------------|
-| `ShareNet()` | `--share-net` | Share network namespace |
-| `InheritFDs()` | `--inherit-fds` | Keep parent FDs |
-| `TTYHack()` | `--tty-hack` | Handle interactive TTY |
-| `SpecialFiles()` | `--special-files` | Keep special files |
-| `AsUID(uid)` | `--as-uid` | Act as user |
-| `AsGID(gid)` | `--as-gid` | Act as group |
+| `ShareNet()` | `--share-net` | Share host network namespace |
+| `InheritFDs()` | `--inherit-fds` | Keep parent file descriptors |
+| `TTYHack()` | `--tty-hack` | Handle programs that require a TTY |
+| `SpecialFiles()` | `--special-files` | Keep special files accessible |
+| `AsUID(uid)` | `--as-uid` | Run as a specific UID |
+| `AsGID(gid)` | `--as-gid` | Run as a specific GID |
 
 ### Meta-file Status Codes
 
-| Constant | Code | Description |
-|----------|------|-------------|
-| `StatusOK` | (empty) | Normal termination |
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `StatusOK` | `""` | Program terminated normally |
 | `StatusRuntimeError` | `RE` | Non-zero exit code |
-| `StatusSignal` | `SG` | Killed by signal |
+| `StatusSignal` | `SG` | Killed by a signal |
 | `StatusTimeout` | `TO` | Time limit exceeded |
 | `StatusInternalError` | `XX` | Internal sandbox error |
 
@@ -234,21 +272,35 @@ fmt.Printf("Status: %s\n", meta.Status)
 
 ```
 go-isolate/
-├── isolate.go         # Core types and constants
-├── builder.go         # Builder design pattern implementation
-├── command.go         # Command building logic
-├── executor.go        # Command execution with context support
-├── meta.go            # Meta-file parsing
-├── validate.go        # Configuration validation
-├── builder_test.go    # Builder tests
-├── meta_test.go       # Meta-file parsing tests
-├── validate_test.go   # Validation tests
-├── example/
-│   └── main.go        # Usage examples
-├── go.mod
-└── README.md
+├── isolate.go          # Core types, constants, and DirOption definitions
+├── builder.go          # Fluent builder (40+ methods)
+├── command.go          # Command construction: BuildInit, BuildRun, BuildCleanup
+├── executor.go         # Sandbox lifecycle: Init, Run, Cleanup, InitAndRun
+├── execute_option.go   # Functional options for dynamic builder modification
+├── meta.go             # Meta-file parser → typed Meta struct
+├── validate.go         # Configuration validation (10+ checks)
+├── *_test.go           # Unit tests
+└── example/main.go     # Runnable examples
 ```
+
+## Contributing
+
+Contributions are welcome! Please open an issue before submitting a large PR so we can discuss the approach.
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feat/my-feature`)
+3. Add tests for your changes
+4. Run `go test ./...` and `go vet ./...`
+5. Open a pull request
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
+
+## Related Projects
+
+- [isolate](https://github.com/ioi/isolate) — the underlying sandbox tool
+- [go-sandbox](https://github.com/criyle/go-sandbox) — alternative Go sandbox using seccomp/cgroups directly
+- [CMS](https://cms-dev.github.io/) — contest management system that uses isolate
 
 ## License
 
-MIT License
+[MIT](LICENSE) — Copyright (c) 2024 Hoang Nguyen Minh
