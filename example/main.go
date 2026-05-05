@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	isolate "github.com/NemCaBong/go-isolate"
+	"github.com/NemCaBong/go-isolate"
 )
 
 func main() {
