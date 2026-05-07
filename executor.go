@@ -13,8 +13,10 @@ import (
 )
 
 // PrepareFunc is a callback invoked between Init and Run, typically used
-// to write files into the sandbox. The workDir parameter is the sandbox
-// working directory (e.g., /var/local/lib/isolate/0/box).
+// to write files into the sandbox. The workDir parameter is the isolate
+// directory returned by --init (e.g., /var/local/lib/isolate/0); the actual
+// sandbox box is at workDir/box. Use WriteToSandbox/WriteReaderToSandbox
+// which handle the /box suffix automatically.
 type PrepareFunc func(workDir string) error
 
 // Result holds the outcome of running a program via isolate.
@@ -36,7 +38,6 @@ type Result struct {
 // lifecycle management and the reusable sandbox pattern.
 type Executor struct {
 	builder *Builder
-	workDir string
 }
 
 // NewExecutor creates a new Executor from a Builder.
@@ -49,40 +50,50 @@ func (b *Builder) Exec() *Executor {
 	return NewExecutor(b)
 }
 
-// WorkDir returns the working directory of the sandbox after Init has been called.
+// WorkDir returns the isolate directory (the outer directory returned by
+// isolate --init command, e.g., /var/local/lib/isolate/0) after Init has been called.
+// The actual sandbox box is at WorkDir()/box — use SandboxDir() to get that path.
 // Returns empty string if Init has not been called yet.
-func (e *Executor) WorkDir() string {
-	return e.workDir
-}
+func (e *Executor) WorkDir() string { return e.builder.WorkDir() }
+
+// SandboxDir returns the real sandbox working directory (WorkDir()/box) after Init has been called.
+// Files written via WriteToSandbox and WriteReaderToSandbox land here.
+// Returns empty string if Init has not been called yet.
+func (e *Executor) SandboxDir() string { return e.builder.SandboxDir() }
 
 // --- File Operations ---
 
-// WriteToSandbox writes content into a file inside the sandbox.
-// destName is the filename (or relative path) inside the sandbox.
+// WriteToSandbox writes content into a file inside the sandbox box directory.
+// destName is the filename (or relative path) inside the sandbox box.
+// Files are written to WorkDir()/box/destName (i.e., the sandboxDir).
 // The caller is responsible for reading source files; this method only
 // receives the content to write.
 //
 // Example:
 //
 //	exec.Init(ctx)
+//	// isolateDir = exec.WorkDir()          e.g., /var/local/lib/isolate/0
+//	// sandboxDir = exec.SandboxDir()       e.g., /var/local/lib/isolate/0/box
 //
 //	// Write a compiled binary (read by caller)
 //	bin, _ := os.ReadFile("/path/to/compiled/solution")
 //	exec.WriteToSandbox("solution", bin, 0755)
+//	// Written to: /var/local/lib/isolate/0/box/solution
 //
 //	// Write input data
 //	exec.WriteToSandbox("input.txt", []byte("5\n1 2 3 4 5\n"), 0644)
+//	// Written to: /var/local/lib/isolate/0/box/input.txt
 //
 //	exec.Run(ctx, "./solution")
 func (e *Executor) WriteToSandbox(destName string, content []byte, perm os.FileMode) error {
-	if e.workDir == "" {
+	if e.builder.sandboxDir == "" {
 		return fmt.Errorf("sandbox not initialized: call Init() first")
 	}
 
-	destPath := filepath.Join(e.workDir, destName)
+	destPath := filepath.Join(e.builder.sandboxDir, destName)
 
 	// Ensure parent directories exist
-	if dir := filepath.Dir(destPath); dir != e.workDir {
+	if dir := filepath.Dir(destPath); dir != e.builder.sandboxDir {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
@@ -96,8 +107,9 @@ func (e *Executor) WriteToSandbox(destName string, content []byte, perm os.FileM
 }
 
 // WriteReaderToSandbox writes content from an io.Reader into a file inside
-// the sandbox. This is useful for large files where loading the entire content
-// into memory is not desirable (e.g., streaming from HTTP response, database, etc.).
+// the sandbox box directory. Files are written to WorkDir()/box/destName (i.e., the sandboxDir).
+// This is useful for large files where loading the entire content into memory
+// is not desirable (e.g., streaming from HTTP response, database, etc.).
 //
 // Example:
 //
@@ -105,20 +117,22 @@ func (e *Executor) WriteToSandbox(destName string, content []byte, perm os.FileM
 //	resp, _ := http.Get("https://example.com/solution")
 //	defer resp.Body.Close()
 //	exec.WriteReaderToSandbox("solution", resp.Body, 0755)
+//	// Written to: /var/local/lib/isolate/0/box/solution
 //
 //	// Stream from an open file
 //	f, _ := os.Open("/path/to/large/binary")
 //	defer f.Close()
 //	exec.WriteReaderToSandbox("binary", f, 0755)
+//	// Written to: /var/local/lib/isolate/0/box/binary
 func (e *Executor) WriteReaderToSandbox(destName string, r io.Reader, perm os.FileMode) error {
-	if e.workDir == "" {
+	if e.builder.sandboxDir == "" {
 		return fmt.Errorf("sandbox not initialized: call Init() first")
 	}
 
-	destPath := filepath.Join(e.workDir, destName)
+	destPath := filepath.Join(e.builder.sandboxDir, destName)
 
 	// Ensure parent directories exist
-	if dir := filepath.Dir(destPath); dir != e.workDir {
+	if dir := filepath.Dir(destPath); dir != e.builder.sandboxDir {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
@@ -159,8 +173,9 @@ func (e *Executor) Init(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("init failed with exit code %d: %s", result.ExitCode, result.Stderr)
 	}
 
-	e.workDir = strings.TrimSpace(result.Stdout)
-	return e.workDir, nil
+	isolateDir := strings.TrimSpace(result.Stdout)
+	e.builder.setDirs(isolateDir)
+	return isolateDir, nil
 }
 
 // Run executes a program inside the sandbox.
@@ -177,7 +192,7 @@ func (e *Executor) Run(ctx context.Context, program string, args ...string) (*Re
 
 	// Attempt to parse meta-file if configured
 	if e.builder.meta != "" {
-		metaData, readErr := os.ReadFile(e.builder.meta)
+		metaData, readErr := os.ReadFile(e.builder.resolvePath(e.builder.meta))
 		if readErr == nil {
 			meta, parseErr := ParseMetaString(string(metaData))
 			if parseErr == nil {
@@ -197,7 +212,7 @@ func (e *Executor) Cleanup(ctx context.Context) {
 	cmd := e.builder.BuildCleanup()
 	// Discard result: --cleanup always exits 0 per isolate docs.
 	_, _ = e.execute(ctx, cmd)
-	e.workDir = ""
+	e.builder.setDirs("")
 }
 
 // --- Reusable Sandbox Pattern ---
@@ -218,10 +233,13 @@ func (e *Executor) Cleanup(ctx context.Context) {
 //	// Simple: no file preparation needed
 //	result1, _ := exec.InitAndRun(ctx, nil, "./solution1")
 //
-//	// With preparation: write files before running
+//	// With preparation: write files before running.
+//	// workDir is the isolate directory (e.g., /var/local/lib/isolate/0).
+//	// WriteToSandbox writes into workDir/box automatically.
 //	bin, _ := os.ReadFile("/host/solution")
 //	prepare := func(workDir string) error {
 //		return exec.WriteToSandbox("solution", bin, 0755)
+//		// Written to: workDir/box/solution
 //	}
 //	result2, _ := exec.InitAndRun(ctx, prepare, "./solution")
 func (e *Executor) InitAndRun(ctx context.Context, prepare PrepareFunc, program string, args ...string) (*Result, error) {
@@ -270,16 +288,18 @@ func (e *Executor) execute(ctx context.Context, cmd *Command) (*Result, error) {
 		Stderr: stderr.String(),
 	}
 
-	if e.builder.stdout != "" && e.workDir != "" {
-		data, readErr := os.ReadFile(filepath.Join(e.workDir, e.builder.stdout))
-		if readErr == nil {
-			result.Stdout = string(data)
+	if e.builder.sandboxDir != "" {
+		if e.builder.stdout != "" {
+			data, readErr := os.ReadFile(e.builder.resolvePath(e.builder.stdout))
+			if readErr == nil {
+				result.Stdout = string(data)
+			}
 		}
-	}
-	if e.builder.stderr != "" && e.workDir != "" {
-		data, readErr := os.ReadFile(filepath.Join(e.workDir, e.builder.stderr))
-		if readErr == nil {
-			result.Stderr = string(data)
+		if e.builder.stderr != "" {
+			data, readErr := os.ReadFile(e.builder.resolvePath(e.builder.stderr))
+			if readErr == nil {
+				result.Stderr = string(data)
+			}
 		}
 	}
 

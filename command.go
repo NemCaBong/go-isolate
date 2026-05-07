@@ -28,11 +28,6 @@ func (b *Builder) buildCommonArgs() []string {
 		args = append(args, fmt.Sprintf("--box-id=%d", *b.boxID))
 	}
 
-	// Meta
-	if b.meta != "" {
-		args = append(args, fmt.Sprintf("--meta=%s", b.meta))
-	}
-
 	// Verbose
 	for i := 0; i < b.verbose; i++ {
 		args = append(args, "--verbose")
@@ -60,18 +55,23 @@ func (b *Builder) buildCommonArgs() []string {
 func (b *Builder) buildRunArgs() []string {
 	var args []string
 
-	// I/O redirection
+	// I/O redirection — resolve relative paths to absolute host paths via sandboxDir.
 	if b.stdin != "" {
-		args = append(args, fmt.Sprintf("--stdin=%s", b.stdin))
+		args = append(args, fmt.Sprintf("--stdin=%s", b.resolvePath(b.stdin)))
 	}
 	if b.stdout != "" {
-		args = append(args, fmt.Sprintf("--stdout=%s", b.stdout))
+		args = append(args, fmt.Sprintf("--stdout=%s", b.resolvePath(b.stdout)))
 	}
 	if b.stderr != "" {
-		args = append(args, fmt.Sprintf("--stderr=%s", b.stderr))
+		args = append(args, fmt.Sprintf("--stderr=%s", b.resolvePath(b.stderr)))
 	}
 	if b.stderrToStdout {
 		args = append(args, "--stderr-to-stdout")
+	}
+
+	// Meta is run-only (captures timing/resource info) and needs a host-side absolute path.
+	if b.meta != "" {
+		args = append(args, fmt.Sprintf("--meta=%s", b.resolvePath(b.meta)))
 	}
 
 	// Chdir
@@ -183,6 +183,7 @@ func (b *Builder) BuildInit() *Command {
 
 // BuildRun builds the command for running a program (--run).
 // program is the executable to run, and programArgs are its arguments.
+// Call Init first so that sandboxDir is set and I/O paths resolve correctly.
 func (b *Builder) BuildRun(program string, programArgs ...string) *Command {
 	var args []string
 	args = append(args, b.buildCommonArgs()...)

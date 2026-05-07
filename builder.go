@@ -1,10 +1,16 @@
 package isolate
 
+import "path/filepath"
+
 // Builder provides a fluent API for constructing isolate commands.
 // Use [New] to create a new Builder instance.
 type Builder struct {
 	// Path to the isolate binary. Defaults to "isolate".
 	isolatePath string
+
+	// Set after Init() is called.
+	workDir    string
+	sandboxDir string
 
 	// --- Basic Options ---
 	boxID  *int
@@ -58,7 +64,39 @@ type Builder struct {
 func New() *Builder {
 	return &Builder{
 		isolatePath: "isolate",
+		meta:        "metadata.txt",
+		stdin:       "stdin.txt",
+		stdout:      "stdout.txt",
+		stderr:      "stderr.txt",
 	}
+}
+
+// WorkDir returns the isolate directory returned by --init (e.g., /var/local/lib/isolate/0).
+// Empty before Init is called.
+func (b *Builder) WorkDir() string { return b.workDir }
+
+// SandboxDir returns the actual sandbox box directory (WorkDir/box).
+// Empty before Init is called.
+func (b *Builder) SandboxDir() string { return b.sandboxDir }
+
+// setDirs is called by the Executor after --init completes to record the
+// sandbox paths needed for building subsequent commands.
+func (b *Builder) setDirs(isolateDir string) {
+	b.workDir = isolateDir
+	if isolateDir == "" {
+		b.sandboxDir = ""
+	} else {
+		b.sandboxDir = filepath.Join(isolateDir, "box")
+	}
+}
+
+// resolvePath converts a relative sandbox file path to an absolute host path
+// using sandboxDir. Absolute paths and empty strings are returned unchanged.
+func (b *Builder) resolvePath(rel string) string {
+	if rel == "" || filepath.IsAbs(rel) {
+		return rel
+	}
+	return filepath.Join(b.sandboxDir, rel)
 }
 
 // IsolatePath sets the path to the isolate binary.
