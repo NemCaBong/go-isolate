@@ -2,6 +2,15 @@ package isolate
 
 import "path/filepath"
 
+const (
+	DefaultMetaFileName   = "metadata.txt"
+	DefaultStdinFileName  = "stdin.txt"
+	DefaultStdoutFileName = "stdout.txt"
+	DefaultStderrFileName = "stderr.txt"
+	DefaultIsolateName    = "isolate"
+	SandBoxDirName        = "box"
+)
+
 // Builder provides a fluent API for constructing isolate commands.
 // Use [New] to create a new Builder instance.
 type Builder struct {
@@ -63,11 +72,11 @@ type Builder struct {
 // The isolate binary path defaults to "isolate".
 func New() *Builder {
 	return &Builder{
-		isolatePath: "isolate",
-		meta:        "metadata.txt",
-		stdin:       "stdin.txt",
-		stdout:      "stdout.txt",
-		stderr:      "stderr.txt",
+		isolatePath: DefaultIsolateName,
+		meta:        DefaultMetaFileName,
+		stdin:       DefaultStdinFileName,
+		stdout:      DefaultStdoutFileName,
+		stderr:      DefaultStderrFileName,
 	}
 }
 
@@ -86,7 +95,7 @@ func (b *Builder) setDirs(isolateDir string) {
 	if isolateDir == "" {
 		b.sandboxDir = ""
 	} else {
-		b.sandboxDir = filepath.Join(isolateDir, "box")
+		b.sandboxDir = filepath.Join(isolateDir, SandBoxDirName)
 	}
 }
 
