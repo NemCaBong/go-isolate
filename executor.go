@@ -12,6 +12,10 @@ import (
 	"strings"
 )
 
+const (
+	SandboxDirName = "box"
+)
+
 // PrepareFunc is a callback invoked between Init and Run, typically used
 // to write files into the sandbox. The workDir parameter is the sandbox
 // working directory (e.g., /var/local/lib/isolate/0/box).
@@ -49,10 +53,19 @@ func (b *Builder) Exec() *Executor {
 	return NewExecutor(b)
 }
 
-// WorkDir returns the working directory of the sandbox after Init has been called.
+// GetWorkDir returns the working directory of the sandbox after Init has been called.
 // Returns empty string if Init has not been called yet.
-func (e *Executor) WorkDir() string {
+func (e *Executor) GetWorkDir() string {
 	return e.workDir
+}
+
+// GetSandboxDir returns the sandbox directory of the sandbox after Init has been called.
+// Returns empty string if Init has not been called yet.
+func (e *Executor) GetSandboxDir() string {
+	if e.workDir == "" {
+		return ""
+	}
+	return e.workDir + "/" + SandboxDirName
 }
 
 // --- File Operations ---
@@ -79,10 +92,10 @@ func (e *Executor) WriteToSandbox(destName string, content []byte, perm os.FileM
 		return fmt.Errorf("sandbox not initialized: call Init() first")
 	}
 
-	destPath := filepath.Join(e.workDir, destName)
+	destPath := filepath.Join(e.GetSandboxDir(), destName)
 
 	// Ensure parent directories exist
-	if dir := filepath.Dir(destPath); dir != e.workDir {
+	if dir := filepath.Dir(destPath); dir != e.GetWorkDir() {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
@@ -115,10 +128,10 @@ func (e *Executor) WriteReaderToSandbox(destName string, r io.Reader, perm os.Fi
 		return fmt.Errorf("sandbox not initialized: call Init() first")
 	}
 
-	destPath := filepath.Join(e.workDir, destName)
+	destPath := filepath.Join(e.GetSandboxDir(), destName)
 
 	// Ensure parent directories exist
-	if dir := filepath.Dir(destPath); dir != e.workDir {
+	if dir := filepath.Dir(destPath); dir != e.GetSandboxDir() {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}

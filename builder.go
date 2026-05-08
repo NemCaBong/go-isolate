@@ -85,21 +85,21 @@ func (b *Builder) Meta(file string) *Builder {
 }
 
 // Stdin redirects standard input from the given file (--stdin).
-// The file must be present inside the sandbox (use WriteToSandbox to copy it).
+// The file must be present inside the sandbox dir (use WriteToSandbox to copy it).
 func (b *Builder) Stdin(file string) *Builder {
 	b.stdin = file
 	return b
 }
 
 // Stdout redirects standard output to the given file (--stdout).
-// The file will be created/written inside the sandbox.
+// The file will be created/written inside the sandbox dir.
 func (b *Builder) Stdout(file string) *Builder {
 	b.stdout = file
 	return b
 }
 
 // Stderr redirects standard error to the given file (--stderr).
-// The file will be created/written inside the sandbox. Mutually exclusive with StderrToStdout.
+// The file will be created/written inside the sandbox dir. Mutually exclusive with StderrToStdout.
 func (b *Builder) Stderr(file string) *Builder {
 	b.stderr = file
 	return b
@@ -113,7 +113,7 @@ func (b *Builder) StderrToStdout() *Builder {
 }
 
 // Chdir changes the working directory before execution (--chdir).
-// The path must be relative to the sandbox root.
+// The path must be relative to the work dir root.
 func (b *Builder) Chdir(dir string) *Builder {
 	b.chdir = dir
 	return b
@@ -251,7 +251,7 @@ func (b *Builder) NoDefaultDirs() *Builder {
 }
 
 // Dir adds a directory binding rule (--dir).
-// inside is the path as seen inside the sandbox,
+// inside is the path as seen inside the work dir,
 // outside is the path as seen by the caller (empty to use /inside).
 func (b *Builder) Dir(inside, outside string, options ...DirOption) *Builder {
 	b.dirRules = append(b.dirRules, DirRule{

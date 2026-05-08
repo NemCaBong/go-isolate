@@ -3,7 +3,7 @@ package isolate_test
 import (
 	"testing"
 
-	isolate "github.com/NemCaBong/go-isolate"
+	"github.com/NemCaBong/go-isolate"
 )
 
 func TestInitAndRunWorkflow(t *testing.T) {
@@ -50,7 +50,7 @@ func TestExecutorWorkDir(t *testing.T) {
 	exec := isolate.New().BoxID(0).Exec()
 
 	// WorkDir should be empty before Init
-	if exec.WorkDir() != "" {
-		t.Errorf("expected empty WorkDir before Init, got %q", exec.WorkDir())
+	if exec.GetWorkDir() != "" {
+		t.Errorf("expected empty WorkDir before Init, got %q", exec.GetWorkDir())
 	}
 }
